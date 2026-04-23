@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package plate;
+
+// Number plate text extraction from images.
+service PlateRecognition {
+  // Reads an image from a path on the server filesystem.
+  rpc RecognizeFromPath (PathRequest) returns (PlateResponse);
+  // Decodes image bytes (e.g. JPEG/PNG file contents).
+  rpc RecognizeFromBytes (BytesRequest) returns (PlateResponse);
+}
+
+message PathRequest {
+  string image_path = 1;
+  // One of: auto, ml, legacy (empty defaults to auto).
+  string pipeline = 2;
+}
+
+message BytesRequest {
+  bytes image_data = 1;
+  string pipeline = 2;
+}
+
+message PlateResponse {
+  // Normalized plate text, or empty if none detected.
+  string plate = 1;
+}

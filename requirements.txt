@@ -1,3 +1,5 @@
 opencv-python
 pytesseract
 rapidocr-onnxruntime
+grpcio
+grpcio-tools

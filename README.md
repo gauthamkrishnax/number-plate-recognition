@@ -1,15 +1,12 @@
-# Number Plate Recognition App
+# Number Plate Recognition
 
-Python app to:
-- detect a number plate in an image
-- extract the text using OCR
-- compare it against an allowlist
-- return success/fail
+Python service to detect a number plate in an image and return the extracted text (OCR).
 
-It supports two pipelines:
-- `auto` (default): ML PP-OCR detector+recognizer first, then legacy contour+Tesseract fallback
-- `ml`: only PP-OCR pipeline
-- `legacy`: only contour+Tesseract pipeline
+Pipelines:
+
+- `auto` (default): ML PP-OCR first, then legacy contour + Tesseract fallback
+- `ml`: PP-OCR only
+- `legacy`: contour + Tesseract only
 
 ## 1) Install dependencies
 
@@ -19,43 +16,41 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-You also need Tesseract OCR installed on your machine:
+Install Tesseract OCR on the host (used by the legacy path):
 
 ```bash
 brew install tesseract
 ```
 
-## 2) Add allowed plate values
-
-Edit `allowed_plates.txt` and put one plate per line.
-
-Example:
-
-```text
-MH12AB1234
-KA01CD5678
-DL8CAF5031
-```
-
-## 3) Run
+Regenerate gRPC Python stubs after editing `proto/plate_recognition.proto`:
 
 ```bash
-python3 app.py --image path/to/car.jpg --allowlist allowed_plates.txt --save-debug
+python -m grpc_tools.protoc -I./proto --python_out=. --grpc_python_out=. ./proto/plate_recognition.proto
 ```
 
-Use explicit ML pipeline:
+## 2) Command line
+
+Prints only the plate string on success (exit code 0). Exit code 1 if no plate; 2 on I/O errors.
 
 ```bash
+python3 app.py --image path/to/car.jpg
 python3 app.py --image path/to/car.jpg --pipeline ml --save-debug
 ```
 
-Output:
-- `Detected plate: <VALUE>`
-- `Match status: SUCCESS` if found in allowlist, otherwise `FAIL`
+## 3) gRPC server
 
-If `--save-debug` is used, a result image is created next to input image with a box around the detected plate.
+```bash
+python3 grpc_server.py --host 0.0.0.0 --port 50051
+```
+
+RPCs (see `proto/plate_recognition.proto`):
+
+- `RecognizeFromPath`: `image_path` on the **server** machine; optional `pipeline` (`auto` / `ml` / `legacy`).
+- `RecognizeFromBytes`: raw file bytes (e.g. JPEG/PNG); optional `pipeline`.
+
+Response message: `plate` — normalized plate text, or empty if none detected.
 
 ## Notes
 
-- For best OCR accuracy, use clear frontal images.
-- `rapidocr-onnxruntime` is used for the ML (PP-OCR) stage.
+- Clear frontal images improve OCR.
+- `rapidocr-onnxruntime` powers the ML stage.

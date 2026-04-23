@@ -1,7 +1,8 @@
 import argparse
 import re
+import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -15,43 +16,16 @@ PLATE_PATTERNS = [
     re.compile(r"^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$"),  # e.g. KA53MK2655
     re.compile(r"^\d{2}[A-Z]{2}\d{4}[A-Z]?$"),      # e.g. 22BH6517A
 ]
-AMBIGUOUS_SUBS = {
-    "0": ["O", "D", "Q"],
-    "1": ["I", "L", "T"],
-    "2": ["Z"],
-    "5": ["S"],
-    "6": ["G"],
-    "8": ["B"],
-    "A": ["4"],
-    "B": ["8"],
-    "D": ["0"],
-    "G": ["6"],
-    "I": ["1", "L"],
-    "L": ["1", "I"],
-    "O": ["0", "Q"],
-    "Q": ["0", "O"],
-    "S": ["5"],
-    "T": ["1"],
-    "Z": ["2"],
-}
 _RAPID_OCR_ENGINE = None
+# Favor larger plate regions when several plausible readings exist (e.g. background plates).
+_PLATE_AREA_SCORE_WEIGHT = 220.0
+# Favor plates nearer the image center (0 = off, higher = stronger center bias).
+_PLATE_CENTER_SCORE_WEIGHT = 65.0
 
 
 def normalize_plate(text: str) -> str:
     """Keep only letters and numbers for robust matching."""
     return re.sub(r"[^A-Z0-9]", "", text.upper())
-
-
-def load_allowlist(file_path: Path) -> List[str]:
-    if not file_path.exists():
-        raise FileNotFoundError(f"Allowlist file not found: {file_path}")
-
-    entries: List[str] = []
-    for line in file_path.read_text(encoding="utf-8").splitlines():
-        cleaned = normalize_plate(line.strip())
-        if cleaned:
-            entries.append(cleaned)
-    return entries
 
 
 def plate_pattern_bonus(text: str) -> float:
@@ -86,57 +60,6 @@ def best_plate_substring(text: str) -> str:
     return best if best else ""
 
 
-def levenshtein_distance(a: str, b: str) -> int:
-    if a == b:
-        return 0
-    if not a:
-        return len(b)
-    if not b:
-        return len(a)
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, start=1):
-        curr = [i]
-        for j, cb in enumerate(b, start=1):
-            ins = curr[j - 1] + 1
-            dele = prev[j] + 1
-            repl = prev[j - 1] + (0 if ca == cb else 1)
-            curr.append(min(ins, dele, repl))
-        prev = curr
-    return prev[-1]
-
-
-def corrected_distance(a: str, b: str) -> int:
-    if not a and not b:
-        return 0
-    max_len = max(len(a), len(b))
-    a = a.ljust(max_len, "_")
-    b = b.ljust(max_len, "_")
-    penalty = 0
-    for ca, cb in zip(a, b):
-        if ca == cb:
-            continue
-        if cb in AMBIGUOUS_SUBS.get(ca, []) or ca in AMBIGUOUS_SUBS.get(cb, []):
-            penalty += 0
-        else:
-            penalty += 1
-    return penalty + abs(len(a.strip("_")) - len(b.strip("_")))
-
-
-def fuzzy_allowlist_match(text: str, allowlist: List[str]) -> Optional[str]:
-    if not text or not allowlist:
-        return None
-    best_match = None
-    best_score = 999
-    for plate in allowlist:
-        d = min(levenshtein_distance(text, plate), corrected_distance(text, plate))
-        if d < best_score:
-            best_match = plate
-            best_score = d
-    if best_match is not None and best_score <= 2:
-        return best_match
-    return None
-
-
 def get_rapidocr_engine():
     global _RAPID_OCR_ENGINE
     if RapidOCR is None:
@@ -146,10 +69,140 @@ def get_rapidocr_engine():
     return _RAPID_OCR_ENGINE
 
 
+def _box_elongation(w: int, h: int) -> float:
+    """>= 1; high for long thin boxes (car plates) and tall stacked bike plates."""
+    return max(w / float(max(h, 1)), h / float(max(w, 1)))
+
+
+def _ml_stack_compatible(a: dict, b: dict) -> bool:
+    """True if two OCR boxes likely belong to one two-line (bike) plate."""
+    if a["y"] <= b["y"]:
+        top, bot = a, b
+    else:
+        top, bot = b, a
+    if abs(top["cx"] - bot["cx"]) > 0.42 * max(top["w"], bot["w"]):
+        return False
+    gap = bot["y"] - top["y2"]
+    if gap > 1.05 * max(top["h"], bot["h"]):
+        return False
+    if gap < -0.32 * min(top["h"], bot["h"]):
+        return False
+    x_ov = min(top["x2"], bot["x2"]) - max(top["x"], bot["x"])
+    if x_ov < 0.22 * min(top["w"], bot["w"]):
+        return False
+    return True
+
+
+def _rapidocr_entries_for_plates(result) -> List[dict]:
+    """Parse RapidOCR lines into axis-aligned boxes with metadata."""
+    entries: List[dict] = []
+    for entry in result:
+        if len(entry) < 3:
+            continue
+        box_points, raw_text, raw_conf = entry[0], entry[1], entry[2]
+        try:
+            confidence = float(raw_conf)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        box = np.array(box_points, dtype=np.float32)
+        x, y, w, h = cv2.boundingRect(box.astype(np.int32))
+        if w < 28 or h < 10:
+            continue
+        el = _box_elongation(w, h)
+        if el < 1.2 or el > 12.0:
+            continue
+        entries.append(
+            {
+                "x": x,
+                "y": y,
+                "w": w,
+                "h": h,
+                "x2": x + w,
+                "y2": y + h,
+                "cx": x + w * 0.5,
+                "cy": y + h * 0.5,
+                "raw": str(raw_text),
+                "conf": confidence,
+            }
+        )
+    return entries
+
+
+def _cluster_ml_entries(entries: List[dict]) -> List[List[int]]:
+    """Group vertically stacked boxes (typical two-wheeler HSRP) via union-find."""
+    n = len(entries)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        pi, pj = find(i), find(j)
+        if pi != pj:
+            parent[pi] = pj
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _ml_stack_compatible(entries[i], entries[j]):
+                union(i, j)
+
+    groups: Dict[int, List[int]] = {}
+    for i in range(n):
+        r = find(i)
+        groups.setdefault(r, []).append(i)
+    return list(groups.values())
+
+
+def _bbox_area_fraction(w: int, h: int, iw: int, ih: int) -> float:
+    return (max(w, 1) * max(h, 1)) / float(max(iw * ih, 1))
+
+
+def _bbox_center_closeness(x: int, y: int, w: int, h: int, iw: int, ih: int) -> float:
+    """1.0 when bbox center is at image center; ~0.0 toward frame corners (linear falloff)."""
+    if iw <= 0 or ih <= 0:
+        return 0.0
+    cx = x + w * 0.5
+    cy = y + h * 0.5
+    icx = iw * 0.5
+    icy = ih * 0.5
+    dist = float(np.hypot(cx - icx, cy - icy))
+    max_dist = float(np.hypot(iw * 0.5, ih * 0.5))
+    if max_dist <= 1e-6:
+        return 1.0
+    return max(0.0, 1.0 - min(1.0, dist / max_dist))
+
+
+def _score_ml_candidate(
+    text: str,
+    confidence: float,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    iw: int,
+    ih: int,
+) -> float:
+    if len(text) < 6:
+        return -1.0
+    area_bonus = _PLATE_AREA_SCORE_WEIGHT * _bbox_area_fraction(w, h, iw, ih)
+    center_bonus = _PLATE_CENTER_SCORE_WEIGHT * _bbox_center_closeness(x, y, w, h, iw, ih)
+    return (
+        confidence * 40.0
+        + plate_pattern_bonus(text) * 2.0
+        + len(text) * 4.0
+        + area_bonus
+        + center_bonus
+    )
+
+
 def detect_and_read_plate_ml(image) -> Tuple[Optional[str], Optional[Tuple[int, int, int, int]]]:
     """
     PP-OCR based detector+recognizer pipeline.
     This is a true ML stage that detects text boxes and recognizes their content.
+    Supports single-line car plates and stacked two-line bike plates.
     """
     engine = get_rapidocr_engine()
     if engine is None:
@@ -162,9 +215,33 @@ def detect_and_read_plate_ml(image) -> Tuple[Optional[str], Optional[Tuple[int, 
 
     for angle in candidate_angles:
         rotated = rotate_image(image, angle) if angle != 0 else image
+        ih, iw = rotated.shape[:2]
         result, _ = engine(rotated)
         if not result:
             continue
+
+        entries = _rapidocr_entries_for_plates(result)
+
+        for cluster in _cluster_ml_entries(entries):
+            if len(cluster) > 6:
+                continue
+            idxs = sorted(cluster, key=lambda i: (entries[i]["y"], entries[i]["x"]))
+            combined_raw = "".join(entries[i]["raw"] for i in idxs)
+            if len(combined_raw) > 48:
+                continue
+            text = best_plate_substring(combined_raw)
+            conf_mean = float(np.mean([entries[i]["conf"] for i in idxs]))
+            xs = [entries[i]["x"] for i in idxs]
+            ys = [entries[i]["y"] for i in idxs]
+            x2s = [entries[i]["x2"] for i in idxs]
+            y2s = [entries[i]["y2"] for i in idxs]
+            x0, y0, x1, y1 = min(xs), min(ys), max(x2s), max(y2s)
+            w0, h0 = x1 - x0, y1 - y0
+            quality = _score_ml_candidate(text, conf_mean, x0, y0, w0, h0, iw, ih)
+            if quality > best_score:
+                best_text = text
+                best_bbox = (x0, y0, w0, h0)
+                best_score = quality
 
         for entry in result:
             if len(entry) < 3:
@@ -181,17 +258,13 @@ def detect_and_read_plate_ml(image) -> Tuple[Optional[str], Optional[Tuple[int, 
 
             box = np.array(box_points, dtype=np.float32)
             x, y, w, h = cv2.boundingRect(box.astype(np.int32))
-            if w < 45 or h < 12:
+            if w < 28 or h < 10:
                 continue
-            aspect_ratio = w / float(max(h, 1))
-            if not 1.6 <= aspect_ratio <= 9.0:
+            el = _box_elongation(w, h)
+            if el < 1.25 or el > 12.0:
                 continue
 
-            quality = (
-                confidence * 40.0
-                + plate_pattern_bonus(text) * 2.0
-                + len(text) * 4.0
-            )
+            quality = _score_ml_candidate(text, confidence, x, y, w, h, iw, ih)
             if quality > best_score:
                 best_text = text
                 best_bbox = (x, y, w, h)
@@ -267,7 +340,8 @@ def detect_plate_regions(image) -> List[Tuple[any, Tuple[int, int, int, int]]]:
         short_side = min(rw, rh)
         long_side = max(rw, rh)
         aspect_ratio = long_side / short_side if short_side > 0 else 0
-        if not (2.0 <= aspect_ratio <= 7.5 and short_side >= 15 and long_side >= 60):
+        # Include taller two-wheeler plate outlines, not only wide car plates.
+        if not (2.0 <= aspect_ratio <= 10.0 and short_side >= 15 and long_side >= 60):
             continue
 
         box = cv2.boxPoints(rect)
@@ -373,14 +447,19 @@ def detect_and_read_plate_legacy(image) -> Tuple[Optional[str], Optional[Tuple[i
 
     for angle in candidate_angles:
         rotated = rotate_image(image, angle) if angle != 0 else image
+        ih, iw = rotated.shape[:2]
         regions = detect_plate_regions(rotated)
         for plate_region, bbox in regions:
             text, score = extract_text_from_plate(plate_region)
             if not text:
                 continue
 
-            # Prefer longer confident plate strings.
-            quality = score + len(text) * 5.0
+            x, y, w, h = bbox
+            area_bonus = _PLATE_AREA_SCORE_WEIGHT * _bbox_area_fraction(w, h, iw, ih)
+            center_bonus = _PLATE_CENTER_SCORE_WEIGHT * _bbox_center_closeness(
+                x, y, w, h, iw, ih
+            )
+            quality = score + len(text) * 5.0 + area_bonus + center_bonus
             if quality > best_score:
                 best_text = text
                 best_bbox = bbox
@@ -389,6 +468,7 @@ def detect_and_read_plate_legacy(image) -> Tuple[Optional[str], Optional[Tuple[i
         # Fallback OCR on full rotated image for heavily skewed/blurred cases.
         fallback_text, fallback_score = extract_text_from_image_fallback(rotated)
         if fallback_text:
+            # No localized bbox: omit area bonus so tight crops are preferred when scores are close.
             fallback_quality = fallback_score + len(fallback_text) * 3.0
             if fallback_quality > best_score:
                 best_text = fallback_text
@@ -417,13 +497,47 @@ def detect_and_read_plate(
     return detect_and_read_plate_legacy(image)
 
 
-def process_image(image_path: Path, allowlist_path: Path, save_debug: bool, pipeline: str) -> int:
+def save_plate_debug_image(
+    image,
+    plate: str,
+    bbox: Optional[Tuple[int, int, int, int]],
+    output_path: Path,
+) -> None:
+    """Write a copy of the image with the plate string and optional bounding box."""
+    debug = image.copy()
+    color = (0, 255, 0)
+    if bbox is not None:
+        x, y, w, h = bbox
+        cv2.rectangle(debug, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(
+            debug,
+            plate,
+            (x, max(20, y - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+    else:
+        cv2.putText(
+            debug,
+            plate,
+            (10, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(output_path), debug)
+
+
+def process_image(image_path: Path, save_debug: bool, pipeline: str) -> int:
     if not image_path.exists():
         print(f"Error: image not found: {image_path}")
         return 2
-
-    allowlist = load_allowlist(allowlist_path)
-    allowset = set(allowlist)
 
     image = cv2.imread(str(image_path))
     if image is None:
@@ -432,56 +546,27 @@ def process_image(image_path: Path, allowlist_path: Path, save_debug: bool, pipe
 
     extracted_plate, bbox = detect_and_read_plate(image, pipeline=pipeline)
     if not extracted_plate:
-        print("No plate detected.")
         return 1
 
-    matched_plate = extracted_plate if extracted_plate in allowset else fuzzy_allowlist_match(
-        extracted_plate, allowlist
-    )
-    is_match = matched_plate is not None
-    status = "SUCCESS" if is_match else "FAIL"
+    print(extracted_plate)
 
-    print(f"Detected plate: {extracted_plate}")
-    if matched_plate and matched_plate != extracted_plate:
-        print(f"Matched allowlist as: {matched_plate}")
-    print(f"Match status: {status}")
-
-    if save_debug and bbox is not None:
-        x, y, w, h = bbox
-        debug = image.copy()
-        color = (0, 255, 0) if is_match else (0, 0, 255)
-        cv2.rectangle(debug, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(
-            debug,
-            f"{extracted_plate} ({status})",
-            (x, max(20, y - 10)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
+    if save_debug:
         output_path = image_path.with_name(f"{image_path.stem}_result{image_path.suffix}")
-        cv2.imwrite(str(output_path), debug)
-        print(f"Debug image saved to: {output_path}")
+        save_plate_debug_image(image, extracted_plate, bbox, output_path)
+        print(f"Debug image saved to: {output_path}", file=sys.stderr)
 
-    return 0 if is_match else 1
+    return 0
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Recognize a vehicle number plate and verify against an allowlist."
+        description="Recognize a vehicle number plate and print the extracted text."
     )
     parser.add_argument("--image", required=True, help="Path to input image.")
     parser.add_argument(
-        "--allowlist",
-        default="allowed_plates.txt",
-        help="Path to file containing allowed plate values (one per line).",
-    )
-    parser.add_argument(
         "--save-debug",
         action="store_true",
-        help="Save an output image with detected plate and match status.",
+        help="Save an output image with detected plate region.",
     )
     parser.add_argument(
         "--pipeline",
@@ -491,9 +576,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    exit_code = process_image(
-        Path(args.image), Path(args.allowlist), args.save_debug, args.pipeline
-    )
+    exit_code = process_image(Path(args.image), args.save_debug, args.pipeline)
     raise SystemExit(exit_code)
 
 
