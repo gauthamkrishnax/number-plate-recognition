@@ -6,6 +6,11 @@ Python app to:
 - compare it against an allowlist
 - return success/fail
 
+It supports two pipelines:
+- `auto` (default): ML PP-OCR detector+recognizer first, then legacy contour+Tesseract fallback
+- `ml`: only PP-OCR pipeline
+- `legacy`: only contour+Tesseract pipeline
+
 ## 1) Install dependencies
 
 ```bash
@@ -38,6 +43,12 @@ DL8CAF5031
 python3 app.py --image path/to/car.jpg --allowlist allowed_plates.txt --save-debug
 ```
 
+Use explicit ML pipeline:
+
+```bash
+python3 app.py --image path/to/car.jpg --pipeline ml --save-debug
+```
+
 Output:
 - `Detected plate: <VALUE>`
 - `Match status: SUCCESS` if found in allowlist, otherwise `FAIL`
@@ -47,4 +58,4 @@ If `--save-debug` is used, a result image is created next to input image with a 
 ## Notes
 
 - For best OCR accuracy, use clear frontal images.
-- This is a contour-based detector and works as a practical starter.
+- `rapidocr-onnxruntime` is used for the ML (PP-OCR) stage.
