@@ -2,6 +2,12 @@ syntax = "proto3";
 
 package plate;
 
+// Which recognition implementation runs (`app.py` vs `app2.py`).
+enum RecognitionBackend {
+  RECOGNITION_BACKEND_APP = 0;
+  RECOGNITION_BACKEND_APP2 = 1;
+}
+
 // Number plate text extraction from images.
 service PlateRecognition {
   // Reads an image from a path on the server filesystem.
@@ -12,16 +18,23 @@ service PlateRecognition {
 
 message PathRequest {
   string image_path = 1;
-  // One of: auto, ml, legacy (empty defaults to auto).
+  // One of: auto, ml, legacy (empty defaults to auto). Used when backend is APP.
   string pipeline = 2;
+  // Defaults to APP if omitted (proto3).
+  RecognitionBackend backend = 3;
 }
 
 message BytesRequest {
   bytes image_data = 1;
   string pipeline = 2;
+  RecognitionBackend backend = 3;
 }
 
 message PlateResponse {
   // Normalized plate text, or empty if none detected.
   string plate = 1;
+  // Detection + OCR runtime spent inside the RPC, in milliseconds.
+  double extraction_time_ms = 2;
+  // Backend-reported confidence/quality score for the returned plate text.
+  double confidence_score = 3;
 }

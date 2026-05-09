@@ -1,7 +1,11 @@
 """Run plate recognition on every image under test/ and save debug overlays to output/."""
 
 import argparse
+import json
+import statistics
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -22,6 +26,7 @@ except ModuleNotFoundError:
     raise SystemExit(1) from None
 
 import app  # noqa: E402
+import app2  # noqa: E402
 
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
@@ -42,10 +47,16 @@ def main() -> None:
         help="Directory for debug images (default: <repo>/output).",
     )
     parser.add_argument(
+        "--backend",
+        choices=["app", "app2"],
+        default="app2",
+        help="Recognition stack: app (app.py) or app2 (faster app2.py). Default: app2.",
+    )
+    parser.add_argument(
         "--pipeline",
         choices=["auto", "ml", "legacy"],
         default="auto",
-        help="Same as app.py --pipeline.",
+        help="Passed to app.py when --backend app (ignored for app2).",
     )
     args = parser.parse_args()
 
@@ -66,12 +77,27 @@ def main() -> None:
         raise SystemExit(1)
 
     ok = 0
+    # Per-image detect+read timing (seconds, `perf_counter`).
+    perf_rows: list[dict[str, object]] = []
+
     for image_path in paths:
         image = cv2.imread(str(image_path))
         if image is None:
             print(f"skip (unreadable): {image_path.name}", file=sys.stderr)
             continue
-        plate, bbox = app.detect_and_read_plate(image, pipeline=args.pipeline)
+        t0 = time.perf_counter()
+        if args.backend == "app2":
+            plate, bbox = app2.detect_and_read_plate_fast(image, fallback=True)
+        else:
+            plate, bbox = app.detect_and_read_plate(image, pipeline=args.pipeline)
+        elapsed_s = time.perf_counter() - t0
+        perf_rows.append(
+            {
+                "file": image_path.name,
+                "detect_read_seconds": round(elapsed_s, 6),
+                "plate_found": bool(plate),
+            }
+        )
         if not plate:
             print(f"{image_path.name}\t(no plate)", file=sys.stderr)
             continue
@@ -80,7 +106,54 @@ def main() -> None:
         print(f"{image_path.name}\t{plate}\t-> {dest}")
         ok += 1
 
-    print(f"Done: {ok}/{len(paths)} with a plate; debug images under {out_dir}", file=sys.stderr)
+    timed = [r["detect_read_seconds"] for r in perf_rows]
+    timed_with_plate = [
+        float(r["detect_read_seconds"]) for r in perf_rows if r["plate_found"]
+    ]
+    perf_summary: dict[str, object] = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "test_dir": str(test_dir),
+        "output_dir": str(out_dir),
+        "backend": args.backend,
+        "pipeline": args.pipeline if args.backend == "app" else None,
+        "image_files_total": len(paths),
+        "images_timed": len(timed),
+        "plates_found": ok,
+        "avg_detect_read_seconds_all_timed": round(statistics.mean(timed), 6)
+        if timed
+        else None,
+        "avg_detect_read_seconds_plate_found_only": round(
+            statistics.mean(timed_with_plate), 6
+        )
+        if timed_with_plate
+        else None,
+        "min_seconds": round(min(timed), 6) if timed else None,
+        "max_seconds": round(max(timed), 6) if timed else None,
+        "per_image": perf_rows,
+    }
+
+    perf_path = out_dir / "batch_performance.json"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    perf_path.write_text(json.dumps(perf_summary, indent=2) + "\n", encoding="utf-8")
+
+    print(
+        f"Done: {ok}/{len(paths)} with a plate; backend={args.backend}; "
+        f"debug images under {out_dir}",
+        file=sys.stderr,
+    )
+    if timed:
+        print(
+            f"Performance: avg detect+read over all {len(timed)} timed image(s): "
+            f"{perf_summary['avg_detect_read_seconds_all_timed']} s",
+            file=sys.stderr,
+        )
+    if timed_with_plate:
+        print(
+            f"Performance: avg over {len(timed_with_plate)} image(s) with a plate: "
+            f"{perf_summary['avg_detect_read_seconds_plate_found_only']} s",
+            file=sys.stderr,
+        )
+    print(f"Performance data written to {perf_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

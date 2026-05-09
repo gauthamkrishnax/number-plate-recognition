@@ -198,7 +198,9 @@ def _score_ml_candidate(
     )
 
 
-def detect_and_read_plate_ml(image) -> Tuple[Optional[str], Optional[Tuple[int, int, int, int]]]:
+def detect_and_read_plate_ml_with_score(
+    image,
+) -> Tuple[Optional[str], Optional[Tuple[int, int, int, int]], float]:
     """
     PP-OCR based detector+recognizer pipeline.
     This is a true ML stage that detects text boxes and recognizes their content.
@@ -206,7 +208,7 @@ def detect_and_read_plate_ml(image) -> Tuple[Optional[str], Optional[Tuple[int, 
     """
     engine = get_rapidocr_engine()
     if engine is None:
-        return None, None
+        return None, None, 0.0
 
     candidate_angles = [0, -20, -10, -5, 5, 10, 20]
     best_text: Optional[str] = None
@@ -270,7 +272,12 @@ def detect_and_read_plate_ml(image) -> Tuple[Optional[str], Optional[Tuple[int, 
                 best_bbox = (x, y, w, h)
                 best_score = quality
 
-    return best_text, best_bbox
+    return best_text, best_bbox, max(0.0, best_score)
+
+
+def detect_and_read_plate_ml(image) -> Tuple[Optional[str], Optional[Tuple[int, int, int, int]]]:
+    text, bbox, _ = detect_and_read_plate_ml_with_score(image)
+    return text, bbox
 
 
 def order_box_points(points: np.ndarray) -> np.ndarray:
@@ -438,7 +445,9 @@ def extract_text_from_image_fallback(image) -> Tuple[Optional[str], float]:
     return (best_text or None), best_score
 
 
-def detect_and_read_plate_legacy(image) -> Tuple[Optional[str], Optional[Tuple[int, int, int, int]]]:
+def detect_and_read_plate_legacy_with_score(
+    image,
+) -> Tuple[Optional[str], Optional[Tuple[int, int, int, int]], float]:
     # Try several small rotations around the original angle to handle tilted photos.
     candidate_angles = [0, -20, -15, -10, -5, 5, 10, 15, 20]
     best_text: Optional[str] = None
@@ -475,26 +484,40 @@ def detect_and_read_plate_legacy(image) -> Tuple[Optional[str], Optional[Tuple[i
                 best_bbox = None
                 best_score = fallback_quality
 
-    return best_text, best_bbox
+    return best_text, best_bbox, max(0.0, best_score)
+
+
+def detect_and_read_plate_legacy(
+    image,
+) -> Tuple[Optional[str], Optional[Tuple[int, int, int, int]]]:
+    text, bbox, _ = detect_and_read_plate_legacy_with_score(image)
+    return text, bbox
+
+
+def detect_and_read_plate_with_score(
+    image, pipeline: str = "auto"
+) -> Tuple[Optional[str], Optional[Tuple[int, int, int, int]], float]:
+    if pipeline not in {"auto", "ml", "legacy"}:
+        raise ValueError("pipeline must be one of: auto, ml, legacy")
+
+    if pipeline == "legacy":
+        return detect_and_read_plate_legacy_with_score(image)
+
+    if pipeline in {"auto", "ml"}:
+        ml_text, ml_bbox, ml_score = detect_and_read_plate_ml_with_score(image)
+        if ml_text:
+            return ml_text, ml_bbox, ml_score
+        if pipeline == "ml":
+            return None, None, 0.0
+
+    return detect_and_read_plate_legacy_with_score(image)
 
 
 def detect_and_read_plate(
     image, pipeline: str = "auto"
 ) -> Tuple[Optional[str], Optional[Tuple[int, int, int, int]]]:
-    if pipeline not in {"auto", "ml", "legacy"}:
-        raise ValueError("pipeline must be one of: auto, ml, legacy")
-
-    if pipeline == "legacy":
-        return detect_and_read_plate_legacy(image)
-
-    if pipeline in {"auto", "ml"}:
-        ml_text, ml_bbox = detect_and_read_plate_ml(image)
-        if ml_text:
-            return ml_text, ml_bbox
-        if pipeline == "ml":
-            return None, None
-
-    return detect_and_read_plate_legacy(image)
+    text, bbox, _ = detect_and_read_plate_with_score(image, pipeline=pipeline)
+    return text, bbox
 
 
 def save_plate_debug_image(

@@ -3,12 +3,15 @@
 import argparse
 from concurrent import futures
 from pathlib import Path
+import time
+from typing import Any, Optional, Tuple
 
 import cv2
 import grpc
 import numpy as np
 
 import app
+import app2
 import plate_recognition_pb2
 import plate_recognition_pb2_grpc
 
@@ -20,6 +23,18 @@ def _normalize_pipeline(raw: str) -> str:
     if p not in _VALID_PIPELINES:
         raise ValueError(f"pipeline must be one of {_VALID_PIPELINES}, got {raw!r}")
     return p
+
+
+def _plate_from_image(
+    image,
+    *,
+    pipeline: str,
+    backend: int,
+) -> Tuple[Optional[str], Any, float]:
+    """Returns (plate_or_empty, bbox, confidence_score)."""
+    if backend == plate_recognition_pb2.RECOGNITION_BACKEND_APP2:
+        return app2.detect_and_read_plate_fast_with_score(image, fallback=True)
+    return app.detect_and_read_plate_with_score(image, pipeline=pipeline)
 
 
 class PlateRecognitionService(plate_recognition_pb2_grpc.PlateRecognitionServicer):
@@ -46,8 +61,18 @@ class PlateRecognitionService(plate_recognition_pb2_grpc.PlateRecognitionService
             )
             return plate_recognition_pb2.PlateResponse()
 
-        plate, _ = app.detect_and_read_plate(image, pipeline=pipeline)
-        return plate_recognition_pb2.PlateResponse(plate=plate or "")
+        t0 = time.perf_counter()
+        plate, _, confidence_score = _plate_from_image(
+            image,
+            pipeline=pipeline,
+            backend=request.backend,
+        )
+        extraction_time_ms = (time.perf_counter() - t0) * 1000.0
+        return plate_recognition_pb2.PlateResponse(
+            plate=plate or "",
+            extraction_time_ms=extraction_time_ms,
+            confidence_score=confidence_score if plate else 0.0,
+        )
 
     def RecognizeFromBytes(self, request, context):
         try:
@@ -69,8 +94,18 @@ class PlateRecognitionService(plate_recognition_pb2_grpc.PlateRecognitionService
             )
             return plate_recognition_pb2.PlateResponse()
 
-        plate, _ = app.detect_and_read_plate(image, pipeline=pipeline)
-        return plate_recognition_pb2.PlateResponse(plate=plate or "")
+        t0 = time.perf_counter()
+        plate, _, confidence_score = _plate_from_image(
+            image,
+            pipeline=pipeline,
+            backend=request.backend,
+        )
+        extraction_time_ms = (time.perf_counter() - t0) * 1000.0
+        return plate_recognition_pb2.PlateResponse(
+            plate=plate or "",
+            extraction_time_ms=extraction_time_ms,
+            confidence_score=confidence_score if plate else 0.0,
+        )
 
 
 def serve(host: str, port: int, max_workers: int) -> None:

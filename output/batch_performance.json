@@ -1,0 +1,101 @@
+{
+  "generated_at_utc": "2026-05-05T17:11:25.894932+00:00",
+  "test_dir": "/Users/gsnair/Documents/Projects/number-plate-recognition/test",
+  "output_dir": "/Users/gsnair/Documents/Projects/number-plate-recognition/output",
+  "backend": "app2",
+  "pipeline": null,
+  "image_files_total": 17,
+  "images_timed": 17,
+  "plates_found": 17,
+  "avg_detect_read_seconds_all_timed": 0.292024,
+  "avg_detect_read_seconds_plate_found_only": 0.292024,
+  "min_seconds": 0.212512,
+  "max_seconds": 0.817698,
+  "per_image": [
+    {
+      "file": "IMG_6748.jpg",
+      "detect_read_seconds": 0.416149,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6749.jpg",
+      "detect_read_seconds": 0.217464,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6750.jpg",
+      "detect_read_seconds": 0.280316,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6751.jpg",
+      "detect_read_seconds": 0.26177,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6752.jpg",
+      "detect_read_seconds": 0.221276,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6753.jpg",
+      "detect_read_seconds": 0.817698,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6754.jpg",
+      "detect_read_seconds": 0.271319,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6755.jpg",
+      "detect_read_seconds": 0.285789,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6756.jpg",
+      "detect_read_seconds": 0.302229,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6757.jpg",
+      "detect_read_seconds": 0.239725,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6758.jpg",
+      "detect_read_seconds": 0.250084,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6759.jpg",
+      "detect_read_seconds": 0.218566,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6760.jpg",
+      "detect_read_seconds": 0.244646,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6761.jpg",
+      "detect_read_seconds": 0.215451,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6762.jpg",
+      "detect_read_seconds": 0.212512,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6763.jpg",
+      "detect_read_seconds": 0.249201,
+      "plate_found": true
+    },
+    {
+      "file": "IMG_6764.jpg",
+      "detect_read_seconds": 0.260219,
+      "plate_found": true
+    }
+  ]
+}

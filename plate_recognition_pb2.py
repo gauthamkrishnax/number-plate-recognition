@@ -24,19 +24,21 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17plate_recognition.proto\x12\x05plate\"3\n\x0bPathRequest\x12\x12\n\nimage_path\x18\x01 \x01(\t\x12\x10\n\x08pipeline\x18\x02 \x01(\t\"4\n\x0c\x42ytesRequest\x12\x12\n\nimage_data\x18\x01 \x01(\x0c\x12\x10\n\x08pipeline\x18\x02 \x01(\t\"\x1e\n\rPlateResponse\x12\r\n\x05plate\x18\x01 \x01(\t2\x92\x01\n\x10PlateRecognition\x12=\n\x11RecognizeFromPath\x12\x12.plate.PathRequest\x1a\x14.plate.PlateResponse\x12?\n\x12RecognizeFromBytes\x12\x13.plate.BytesRequest\x1a\x14.plate.PlateResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17plate_recognition.proto\x12\x05plate\"_\n\x0bPathRequest\x12\x12\n\nimage_path\x18\x01 \x01(\t\x12\x10\n\x08pipeline\x18\x02 \x01(\t\x12*\n\x07\x62\x61\x63kend\x18\x03 \x01(\x0e\x32\x19.plate.RecognitionBackend\"`\n\x0c\x42ytesRequest\x12\x12\n\nimage_data\x18\x01 \x01(\x0c\x12\x10\n\x08pipeline\x18\x02 \x01(\t\x12*\n\x07\x62\x61\x63kend\x18\x03 \x01(\x0e\x32\x19.plate.RecognitionBackend\"T\n\rPlateResponse\x12\r\n\x05plate\x18\x01 \x01(\t\x12\x1a\n\x12\x65xtraction_time_ms\x18\x02 \x01(\x01\x12\x18\n\x10\x63onfidence_score\x18\x03 \x01(\x01*O\n\x12RecognitionBackend\x12\x1b\n\x17RECOGNITION_BACKEND_APP\x10\x00\x12\x1c\n\x18RECOGNITION_BACKEND_APP2\x10\x01\x32\x92\x01\n\x10PlateRecognition\x12=\n\x11RecognizeFromPath\x12\x12.plate.PathRequest\x1a\x14.plate.PlateResponse\x12?\n\x12RecognizeFromBytes\x12\x13.plate.BytesRequest\x1a\x14.plate.PlateResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'plate_recognition_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
+  _globals['_RECOGNITIONBACKEND']._serialized_start=315
+  _globals['_RECOGNITIONBACKEND']._serialized_end=394
   _globals['_PATHREQUEST']._serialized_start=34
-  _globals['_PATHREQUEST']._serialized_end=85
-  _globals['_BYTESREQUEST']._serialized_start=87
-  _globals['_BYTESREQUEST']._serialized_end=139
-  _globals['_PLATERESPONSE']._serialized_start=141
-  _globals['_PLATERESPONSE']._serialized_end=171
-  _globals['_PLATERECOGNITION']._serialized_start=174
-  _globals['_PLATERECOGNITION']._serialized_end=320
+  _globals['_PATHREQUEST']._serialized_end=129
+  _globals['_BYTESREQUEST']._serialized_start=131
+  _globals['_BYTESREQUEST']._serialized_end=227
+  _globals['_PLATERESPONSE']._serialized_start=229
+  _globals['_PLATERESPONSE']._serialized_end=313
+  _globals['_PLATERECOGNITION']._serialized_start=397
+  _globals['_PLATERECOGNITION']._serialized_end=543
 # @@protoc_insertion_point(module_scope)
